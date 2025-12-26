@@ -1,4 +1,3 @@
-```markdown
 # Research & Technology Justification
 
 ## 1. Multi-Tenancy Analysis
@@ -120,5 +119,3 @@ We never store plain-text passwords.
 To ensure accountability, we track destructive actions.
 * Every time a project is deleted or a new user is added, we write a row to `audit_logs`.
 * This creates an immutable trail. If a project mysteriously disappears, the Tenant Admin can review the logs to see *who* deleted it and *when*. This is crucial for enterprise compliance.
-
-```
