@@ -1,0 +1,32 @@
+{
+  "testCredentials": {
+    "superAdmin": {
+      "email": "superadmin@system.com",
+      "password": "Admin@123"
+    },
+    "tenantAdmin": {
+      "email": "admin@demo.com",
+      "password": "Demo@123",
+      "subdomain": "demo"
+    },
+    "regularUser": {
+      "email": "user1@demo.com",
+      "password": "User@123",
+      "subdomain": "demo"
+    },
+    "users": [
+      {
+        "email": "user2@demo.com",
+        "password": "User@123",
+        "role": "user",
+        "subdomain": "demo"
+      }
+    ]
+  },
+  "deployment": {
+    "dockerComposeFile": "docker-compose.yml",
+    "frontendUrl": "http://localhost:3000",
+    "backendUrl": "http://localhost:5000",
+    "healthCheckUrl": "http://localhost:5000/api/health"
+  }
+}
