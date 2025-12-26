@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext'; // <--- 1. Import Context
 
 const Login = () => {
   const navigate = useNavigate();
+  const { login } = useAuth(); // <--- 2. Get login function
+  
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -21,14 +24,27 @@ const Login = () => {
     setLoading(true);
     setError(null);
 
+    // 3. Clean inputs (Trim spaces to avoid errors)
+    const payload = {
+      email: formData.email.trim(),
+      password: formData.password,
+      tenantSubdomain: formData.tenantSubdomain.trim()
+    };
+
     try {
-      const response = await api.post('/auth/login', formData);
+      const response = await api.post('/auth/login', payload);
       const { token, user } = response.data.data;
       
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
+      // 4. USE CONTEXT LOGIN (Updates State + LocalStorage)
+      login(token, user);
       
-      navigate('/dashboard');
+      // 5. Redirect based on role
+      if (user.role === 'super_admin') {
+        navigate('/admin/tenants');
+      } else {
+        navigate('/dashboard');
+      }
+      
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed. Please check your credentials.');
     } finally {
@@ -79,7 +95,6 @@ const Login = () => {
                     id="tenantSubdomain"
                     name="tenantSubdomain"
                     type="text"
-                    // FIXED: Removed 'required' attribute here
                     value={formData.tenantSubdomain}
                     onChange={handleChange}
                     className="flex-1 block w-full rounded-l-md border-slate-300 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm py-2 px-3 border"

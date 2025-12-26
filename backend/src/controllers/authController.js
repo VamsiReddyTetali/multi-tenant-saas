@@ -6,14 +6,11 @@ exports.registerTenant = async (req, res) => {
   const { tenantName, subdomain, adminEmail, adminPassword, adminFullName } = req.body;
 
   try {
-    // 1. Check if subdomain exists (Must be globally unique)
+    // 1. Check if subdomain exists
     const subCheck = await pool.query('SELECT id FROM tenants WHERE subdomain = $1', [subdomain]);
     if (subCheck.rows.length > 0) {
       return res.status(400).json({ success: false, message: 'Subdomain already taken' });
     }
-
-    // NOTE: Removed global email check per strict multi-tenancy requirements.
-    // Emails are only unique PER tenant, which is handled by the DB constraint.
 
     // 2. Create Tenant
     const tenantResult = await pool.query(
@@ -33,19 +30,12 @@ exports.registerTenant = async (req, res) => {
     );
     const newUserId = userResult.rows[0].id;
 
-    // 5. AUDIT LOG: REGISTER TENANT
+    // 5. Audit Log
     try {
       await pool.query(
         `INSERT INTO audit_logs (tenant_id, user_id, action, entity_type, entity_id, ip_address)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          tenantId,
-          newUserId,
-          'REGISTER_TENANT',
-          'tenant',       // entity_type
-          tenantId,       // entity_id
-          req.ip || '0.0.0.0'
-        ]
+        [tenantId, newUserId, 'REGISTER_TENANT', 'tenant', tenantId, req.ip || '0.0.0.0']
       );
     } catch (logErr) { console.error('Audit failed:', logErr); }
 
@@ -61,48 +51,31 @@ exports.login = async (req, res) => {
 
   try {
     let user;
-    let tenantId = null;
-
-    // SCENARIO 1: Super Admin Login (Empty Subdomain)
+    
+    // SCENARIO 1: Super Admin Login
     if (!tenantSubdomain) {
       const userRes = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-      
-      if (userRes.rows.length === 0) {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
-      }
+      if (userRes.rows.length === 0) return res.status(401).json({ success: false, message: 'Invalid credentials' });
       
       user = userRes.rows[0];
-
-      if (user.role !== 'super_admin') {
-        return res.status(403).json({ success: false, message: 'Regular users must provide a workspace subdomain.' });
-      }
+      if (user.role !== 'super_admin') return res.status(403).json({ success: false, message: 'Regular users must provide a workspace subdomain.' });
     } 
     // SCENARIO 2: Regular Tenant Login
     else {
       const tenantRes = await pool.query('SELECT id, status FROM tenants WHERE subdomain = $1', [tenantSubdomain]);
-      if (tenantRes.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'Workspace not found' });
-      }
+      if (tenantRes.rows.length === 0) return res.status(404).json({ success: false, message: 'Workspace not found' });
       
       const tenant = tenantRes.rows[0];
-      if (tenant.status === 'suspended') {
-        return res.status(403).json({ success: false, message: 'This workspace has been suspended.' });
-      }
+      if (tenant.status === 'suspended') return res.status(403).json({ success: false, message: 'This workspace has been suspended.' });
       
-      tenantId = tenant.id;
-
-      const userRes = await pool.query('SELECT * FROM users WHERE email = $1 AND tenant_id = $2', [email, tenantId]);
-      if (userRes.rows.length === 0) {
-        return res.status(401).json({ success: false, message: 'Invalid credentials' });
-      }
+      const userRes = await pool.query('SELECT * FROM users WHERE email = $1 AND tenant_id = $2', [email, tenant.id]);
+      if (userRes.rows.length === 0) return res.status(401).json({ success: false, message: 'Invalid credentials' });
       user = userRes.rows[0];
     }
 
     // Verify Password
     const isMatch = await bcrypt.compare(password, user.password_hash);
-    if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
+    if (!isMatch) return res.status(401).json({ success: false, message: 'Invalid credentials' });
 
     // Generate Token
     const token = jwt.sign(
@@ -117,19 +90,12 @@ exports.login = async (req, res) => {
         tenantData = fullTenantRes.rows[0];
     }
 
-    // AUDIT LOG: LOGIN
+    // Audit Log
     try {
       await pool.query(
         `INSERT INTO audit_logs (tenant_id, user_id, action, entity_type, entity_id, ip_address)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          user.tenant_id, 
-          user.id,
-          'USER_LOGIN',
-          'user',         // entity_type
-          user.id,        // entity_id
-          req.ip || '0.0.0.0'
-        ]
+        [user.tenant_id, user.id, 'USER_LOGIN', 'user', user.id, req.ip || '0.0.0.0']
       );
     } catch (logErr) { console.error('Login audit failed:', logErr); }
 
@@ -146,7 +112,6 @@ exports.login = async (req, res) => {
         }
       }
     });
-
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -159,10 +124,7 @@ exports.getMe = async (req, res) => {
       'SELECT id, email, full_name, role, tenant_id, created_at FROM users WHERE id = $1', 
       [req.user.id]
     );
-    
-    if (userRes.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
+    if (userRes.rows.length === 0) return res.status(404).json({ success: false, message: 'User not found' });
 
     const user = userRes.rows[0];
     let tenantData = null;
@@ -175,14 +137,7 @@ exports.getMe = async (req, res) => {
       tenantData = tenantRes.rows[0];
     }
 
-    res.json({
-      success: true,
-      data: {
-        ...user,
-        tenant: tenantData
-      }
-    });
-
+    res.json({ success: true, data: { ...user, tenant: tenantData } });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -208,7 +163,7 @@ exports.addTeamMember = async (req, res) => {
   const { tenantId, id: adminId } = req.user;
 
   try {
-    // 1. Check User Limits (Strict Requirement)
+    // 1. Check User Limits
     const countRes = await pool.query('SELECT COUNT(*) FROM users WHERE tenant_id = $1', [tenantId]);
     const limitRes = await pool.query('SELECT max_users FROM tenants WHERE id = $1', [tenantId]);
     
@@ -226,49 +181,79 @@ exports.addTeamMember = async (req, res) => {
       [tenantId, email, hashedPassword, fullName, role || 'user']
     );
 
-    // AUDIT LOG: ADD USER
+    // Audit Log
     try {
       await pool.query(
         `INSERT INTO audit_logs (tenant_id, user_id, action, entity_type, entity_id, ip_address)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          tenantId,
-          adminId,
-          'CREATE_USER',
-          'user',
-          result.rows[0].id, // The new user's ID
-          req.ip || '0.0.0.0'
-        ]
+        [tenantId, adminId, 'CREATE_USER', 'user', result.rows[0].id, req.ip || '0.0.0.0']
       );
     } catch (logErr) { console.error('Audit failed:', logErr); }
 
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
-    if (error.code === '23505') {
-       return res.status(409).json({ success: false, message: 'Email already exists in this organization' });
-    }
+    if (error.code === '23505') return res.status(409).json({ success: false, message: 'Email already exists in this organization' });
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
 exports.updateProfile = async (req, res) => {
-  const { fullName } = req.body;
+  const { full_name, currentPassword, newPassword } = req.body;
   const { id } = req.user;
+
   try {
-    await pool.query('UPDATE users SET full_name = $1 WHERE id = $2', [fullName, id]);
-    res.json({ success: true, message: 'Profile updated' });
-  } catch (err) { res.status(500).json({ message: 'Server error' }); }
+    // 1. Fetch the current user to get their hashed password
+    const userRes = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+    const user = userRes.rows[0];
+
+    if (newPassword) {
+      // SECURITY CHECK: Must provide current password to set a new one
+      if (!currentPassword) {
+        return res.status(400).json({ success: false, message: 'Current password is required to change password.' });
+      }
+
+      // Verify Current Password
+      const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isMatch) {
+        return res.status(401).json({ success: false, message: 'Incorrect current password.' });
+      }
+
+      // Hash New Password
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(newPassword, salt);
+      
+      // Update Name AND Password
+      await pool.query(
+        'UPDATE users SET full_name = $1, password_hash = $2 WHERE id = $3',
+        [full_name, hashedPassword, id]
+      );
+    } else {
+      // Update Name ONLY (No password checks needed)
+      await pool.query(
+        'UPDATE users SET full_name = $1 WHERE id = $2',
+        [full_name, id]
+      );
+    }
+
+    // Return updated user object
+    const result = await pool.query(
+      'SELECT id, email, full_name, role, tenant_id FROM users WHERE id = $1',
+      [id]
+    );
+
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) {
+    console.error('Update Profile Error:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 exports.getAllTenants = async (req, res) => {
   try {
-    // Fetch all tenants with their user count (optional count logic, simplified here)
     const result = await pool.query(`
       SELECT id, name, subdomain, status, subscription_plan, created_at 
-      FROM tenants 
-      ORDER BY created_at DESC
+      FROM tenants ORDER BY created_at DESC
     `);
-    
     res.json({ success: true, data: result.rows });
   } catch (error) {
     console.error('GetAllTenants Error:', error);
